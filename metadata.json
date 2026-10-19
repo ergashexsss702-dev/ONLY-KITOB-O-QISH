@@ -1,0 +1,6 @@
+{
+  "name": "ONLY KITOB O‘QISH — Premium Online Library",
+  "description": "ONLY KITOB O‘QISH — O‘zbekistondagi eng zamonaviy onlayn kitob o‘qish platformasi. O‘zbek va jahon adabiyoti, elektron kitoblar, audio va PDF mutolaa tizimi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
