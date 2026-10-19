@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Search, 
   X, 
@@ -9,7 +9,8 @@ import {
   ChevronRight, 
   Star,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { 
   Book, 
@@ -24,6 +25,7 @@ import {
 import { translations } from './data/translations';
 import { initialCategories } from './data/initialBooks';
 import { storage } from './lib/storage';
+import { bookMatchesQuery, filterBooksBySearch } from './lib/search';
 import { BackgroundLayer } from './components/BackgroundLayer';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
@@ -46,6 +48,10 @@ export default function App() {
   const [readingHistory, setReadingHistory] = useState<Record<string, ReadingProgress>>(() => storage.getAllProgress());
   const [purchases, setPurchases] = useState<PurchaseRecord[]>(() => storage.getPurchases());
 
+  // Database Loading & Error States
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // Navigation & Modals
   const [currentTab, setCurrentTab] = useState<string>('home'); // 'home' | 'library' | 'genres' | 'favorites' | 'history'
   const [activeBookForModal, setActiveBookForModal] = useState<Book | null>(null);
@@ -58,7 +64,6 @@ export default function App() {
   const [adminModalOpen, setAdminModalOpen] = useState<boolean>(false);
 
   // Search & Filter State
-  const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedAgeRating, setSelectedAgeRating] = useState<string>('all');
@@ -68,6 +73,30 @@ export default function App() {
   const theme = preferences.theme;
   const t = translations[language];
   const isDark = theme === 'dark';
+
+  // Asynchronous database loader
+  const loadBooks = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const res = await storage.fetchBooksAsync();
+      setBooks(res.books);
+      if (res.error) {
+        // Log info or soft error if remote query had issue
+        console.info('Database notice:', res.error);
+      }
+    } catch (err: any) {
+      setLoadError(err?.message || 'Tarmoq xatosi yuz berdi');
+      // Ensure we still have local fallback
+      setBooks(storage.getBooks());
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBooks();
+  }, [loadBooks]);
 
   // Apply dark/light theme class to document body
   useEffect(() => {
@@ -154,42 +183,47 @@ export default function App() {
     return books.find((b) => b.id === 'otkan-kunlar') || books[0];
   }, [books]);
 
-  // Filtering Logic
+  // Robust Filtering and Search Engine Logic
   const filteredBooks = useMemo(() => {
-    return books.filter((book) => {
-      // Visibility
-      if (!book.isActive) return false;
+    // 1. Base pool: Active books
+    let pool = books.filter((book) => book.isActive);
 
-      // Search Query (title, author, genre)
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase().trim();
-        const matchTitle = book.title.toLowerCase().includes(query);
-        const matchAuthor = book.author.toLowerCase().includes(query);
-        const matchGenre = book.genre.toLowerCase().includes(query);
-        if (!matchTitle && !matchAuthor && !matchGenre) return false;
+    // 2. Tab constraints when NOT actively searching
+    if (!searchQuery.trim()) {
+      if (currentTab === 'favorites') {
+        pool = pool.filter((book) => favoriteIds.includes(book.id));
+      } else if (currentTab === 'history') {
+        pool = pool.filter((book) => Boolean(readingHistory[book.id]));
       }
+    }
 
-      // Category filter
-      if (selectedCategory !== 'all') {
-        if (selectedCategory === 'bepul' && !book.isFree) return false;
-        if (selectedCategory !== 'bepul' && book.categoryId !== selectedCategory) return false;
+    // 3. Category Filter
+    if (selectedCategory !== 'all') {
+      if (selectedCategory === 'bepul') {
+        pool = pool.filter((book) => book.isFree);
+      } else {
+        pool = pool.filter((book) => book.categoryId === selectedCategory);
       }
+    }
 
-      // Age Rating filter
-      if (selectedAgeRating !== 'all') {
-        if (book.ageRating !== selectedAgeRating) return false;
-      }
+    // 4. Age Rating Filter
+    if (selectedAgeRating !== 'all') {
+      pool = pool.filter((book) => book.ageRating === selectedAgeRating);
+    }
 
-      // Price filter
-      if (selectedPriceFilter === 'free' && !book.isFree) return false;
-      if (selectedPriceFilter === 'paid' && book.isFree) return false;
+    // 5. Price Filter
+    if (selectedPriceFilter === 'free') {
+      pool = pool.filter((book) => book.isFree);
+    } else if (selectedPriceFilter === 'paid') {
+      pool = pool.filter((book) => !book.isFree);
+    }
 
-      // Tab specific views
-      if (currentTab === 'favorites' && !favoriteIds.includes(book.id)) return false;
-      if (currentTab === 'history' && !readingHistory[book.id]) return false;
+    // 6. Search Query (Title, Author, Genre, Description, and Chapters)
+    if (searchQuery.trim()) {
+      pool = filterBooksBySearch(pool, searchQuery);
+    }
 
-      return true;
-    });
+    return pool;
   }, [
     books,
     searchQuery,
@@ -203,7 +237,6 @@ export default function App() {
 
   // Curated collections for the home catalog sections
   const recommendedBooks = useMemo(() => {
-    // If user has set an age, recommend books matching or below user's age
     return books.filter((b) => b.isActive).slice(0, 6);
   }, [books]);
 
@@ -230,6 +263,11 @@ export default function App() {
     setSelectedPriceFilter('all');
   };
 
+  const handleSearchSubmit = () => {
+    const catalogEl = document.getElementById('catalog-section');
+    catalogEl?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   // If reader is open, display full-screen BookReader exclusively!
   if (readingBook) {
     return (
@@ -247,6 +285,14 @@ export default function App() {
       />
     );
   }
+
+  const isSearchOrFilterActive = Boolean(
+    searchQuery.trim() ||
+    selectedCategory !== 'all' ||
+    selectedAgeRating !== 'all' ||
+    selectedPriceFilter !== 'all' ||
+    currentTab !== 'home'
+  );
 
   return (
     <div className="min-h-screen flex flex-col relative selection:bg-purple-600 selection:text-white">
@@ -277,12 +323,14 @@ export default function App() {
         }}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenAdmin={() => setAdminModalOpen(true)}
-        onToggleSearch={() => setSearchOpen(!searchOpen)}
+        searchQuery={searchQuery}
+        onSearchChange={(q) => setSearchQuery(q)}
+        onSearchSubmit={handleSearchSubmit}
         favoritesCount={favoriteIds.length}
       />
 
-      {/* Hero Section (shown on Home tab) */}
-      {currentTab === 'home' && !searchQuery && (
+      {/* Hero Section (shown on Home tab when not searching) */}
+      {currentTab === 'home' && !searchQuery.trim() && (
         <Hero
           language={language}
           theme={theme}
@@ -301,7 +349,13 @@ export default function App() {
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         {/* Search & Filter Toolbar */}
         <div id="catalog-section" className="space-y-4 mb-8">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSearchSubmit();
+            }}
+            className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4"
+          >
             {/* Search Input Box */}
             <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-purple-400" />
@@ -310,20 +364,30 @@ export default function App() {
                 placeholder={t.searchPlaceholder}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-10 py-3 rounded-2xl text-sm border focus:outline-none transition-all ${
+                className={`w-full pl-10 pr-20 py-3 rounded-2xl text-sm border focus:outline-none transition-all ${
                   isDark
                     ? 'bg-zinc-900/80 border-purple-900/30 text-white focus:border-purple-500 shadow-inner'
                     : 'bg-white border-slate-200 text-slate-900 focus:border-purple-600 shadow-sm'
                 }`}
               />
-              {searchQuery && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="p-1 rounded-md text-slate-400 hover:text-white cursor-pointer"
+                    title={t.clearFilters}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
                 <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                  type="submit"
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-purple-600 text-white hover:bg-purple-500 cursor-pointer shadow transition-all"
                 >
-                  <X className="w-4 h-4" />
+                  {t.searchButton}
                 </button>
-              )}
+              </div>
             </div>
 
             {/* Quick Filter Selectors (Age & Price) */}
@@ -362,8 +426,9 @@ export default function App() {
               </select>
 
               {/* Clear Filter Button if active */}
-              {(searchQuery || selectedCategory !== 'all' || selectedAgeRating !== 'all' || selectedPriceFilter !== 'all') && (
+              {isSearchOrFilterActive && (
                 <button
+                  type="button"
                   onClick={clearAllFilters}
                   className="p-2.5 rounded-xl border border-purple-900/40 text-purple-400 hover:bg-purple-950/40 transition-colors cursor-pointer text-xs flex items-center gap-1"
                   title={t.clearFilters}
@@ -373,7 +438,7 @@ export default function App() {
                 </button>
               )}
             </div>
-          </div>
+          </form>
 
           {/* Interactive Genre & Category Segmented Tabs */}
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
@@ -399,230 +464,285 @@ export default function App() {
           </div>
         </div>
 
+        {/* Loading State Display */}
+        {isLoading && (
+          <div className="py-24 text-center space-y-4">
+            <Loader2 className="w-10 h-10 text-purple-500 animate-spin mx-auto" />
+            <p className="text-sm font-semibold text-slate-300">{t.loadingBooks}</p>
+          </div>
+        )}
+
+        {/* Network / Server Error Display */}
+        {!isLoading && loadError && (
+          <div className="py-16 text-center space-y-4 max-w-md mx-auto p-6 rounded-3xl bg-rose-950/30 border border-rose-900/40">
+            <AlertCircle className="w-10 h-10 text-rose-400 mx-auto" />
+            <h3 className="text-base font-bold text-rose-300">{t.networkError}</h3>
+            <p className="text-xs text-slate-400">{loadError}</p>
+            <button
+              onClick={loadBooks}
+              className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow transition-all cursor-pointer"
+            >
+              {t.retry}
+            </button>
+          </div>
+        )}
+
+        {/* Empty Database State */}
+        {!isLoading && !loadError && books.length === 0 && (
+          <div className="py-24 text-center space-y-3">
+            <BookOpen className="w-12 h-12 text-purple-500/30 mx-auto" />
+            <h3 className="text-base font-bold text-slate-300">{t.emptyDatabase}</h3>
+          </div>
+        )}
+
         {/* Tab Specific Views or Search Results */}
-        {currentTab === 'favorites' && (
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-xl font-bold font-display">{t.favoritesTab}</h2>
-            <span className="text-xs text-slate-400">{filteredBooks.length} {t.foundResults}</span>
-          </div>
-        )}
+        {!isLoading && !loadError && books.length > 0 && (
+          <>
+            {currentTab === 'favorites' && !searchQuery.trim() && (
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="text-xl font-bold font-display">{t.favoritesTab}</h2>
+                <span className="text-xs text-slate-400 tabular-nums">{filteredBooks.length} {t.foundResults}</span>
+              </div>
+            )}
 
-        {currentTab === 'history' && (
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-xl font-bold font-display">{t.readingHistoryTab}</h2>
-            <span className="text-xs text-slate-400">{filteredBooks.length} {t.foundResults}</span>
-          </div>
-        )}
+            {currentTab === 'history' && !searchQuery.trim() && (
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="text-xl font-bold font-display">{t.readingHistoryTab}</h2>
+                <span className="text-xs text-slate-400 tabular-nums">{filteredBooks.length} {t.foundResults}</span>
+              </div>
+            )}
 
-        {/* Search / Filter Active Results Grid */}
-        {(searchQuery || selectedCategory !== 'all' || selectedAgeRating !== 'all' || selectedPriceFilter !== 'all' || currentTab !== 'home') ? (
-          <div>
-            <div className="mb-4 text-xs text-slate-400 font-medium">
-              {filteredBooks.length} {t.foundResults}
-            </div>
+            {/* Search / Filter Active Results Grid */}
+            {isSearchOrFilterActive ? (
+              <div>
+                <div className="mb-4 flex items-center justify-between text-xs text-slate-400 font-medium">
+                  <div>
+                    {searchQuery.trim() ? (
+                      <span>
+                        «<strong className="text-purple-300">{searchQuery}</strong>» bo‘yicha qidiruv natijalari:
+                      </span>
+                    ) : (
+                      <span>Saralangan kitoblar:</span>
+                    )}{' '}
+                    <span className="tabular-nums font-semibold text-white ml-1">
+                      {filteredBooks.length} {t.foundResults}
+                    </span>
+                  </div>
 
-            {filteredBooks.length > 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                {filteredBooks.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    language={language}
-                    theme={theme}
-                    isFavorite={favoriteIds.includes(book.id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onViewBook={(b) => setActiveBookForModal(b)}
-                    onReadBook={(b) => handleStartReading(b)}
-                    readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                  />
-                ))}
+                  {searchQuery && (
+                    <button
+                      onClick={clearAllFilters}
+                      className="text-purple-400 hover:text-purple-300 hover:underline cursor-pointer"
+                    >
+                      {t.clearFilters}
+                    </button>
+                  )}
+                </div>
+
+                {filteredBooks.length > 0 ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    {filteredBooks.map((book) => (
+                      <BookCard
+                        key={book.id}
+                        book={book}
+                        language={language}
+                        theme={theme}
+                        isFavorite={favoriteIds.includes(book.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onViewBook={(b) => setActiveBookForModal(b)}
+                        onReadBook={(b) => handleStartReading(b)}
+                        readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-20 text-center space-y-4 max-w-md mx-auto">
+                    <div className="w-16 h-16 rounded-full bg-purple-950/40 border border-purple-900/40 flex items-center justify-center mx-auto text-purple-400">
+                      <AlertCircle className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-lg font-bold font-display text-white">{t.noBooksFound}</h3>
+                    <p className="text-xs text-slate-400 max-w-sm mx-auto">{t.noBooksFoundDesc}</p>
+                    <button
+                      onClick={clearAllFilters}
+                      className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-purple-600 text-white hover:bg-purple-500 cursor-pointer shadow-md transition-all"
+                    >
+                      {t.clearFilters}
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="py-20 text-center space-y-4">
-                <div className="w-16 h-16 rounded-full bg-purple-950/40 border border-purple-900/40 flex items-center justify-center mx-auto text-purple-400">
-                  <AlertCircle className="w-8 h-8" />
-                </div>
-                <h3 className="text-lg font-bold font-display">{t.noBooksFound}</h3>
-                <p className="text-xs text-slate-400 max-w-sm mx-auto">{t.noBooksFoundDesc}</p>
-                <button
-                  onClick={clearAllFilters}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-600 text-white hover:bg-purple-500 cursor-pointer shadow-md"
-                >
-                  {t.clearFilters}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          /* Structured Editorial Collections for Home Page */
-          <div className="space-y-16">
-            {/* 1. Siz uchun tavsiyalar */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold font-display">{t.recommended}</h2>
-                  <p className="text-xs text-slate-400">Eng ko‘p o‘qilgan va yuqori baholangan asarlar</p>
-                </div>
-                <button
-                  onClick={() => setSelectedCategory('all')}
-                  className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Barchasi</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                {recommendedBooks.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    language={language}
-                    theme={theme}
-                    isFavorite={favoriteIds.includes(book.id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onViewBook={(b) => setActiveBookForModal(b)}
-                    onReadBook={(b) => handleStartReading(b)}
-                    readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                  />
-                ))}
-              </div>
-            </section>
-
-            {/* 2. O‘zbek adabiyoti durdonalari */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold font-display">{t.uzbekLiterature}</h2>
-                  <p className="text-xs text-slate-400">Navoiy, Qodiriy, Bobur va Cho‘lpon merosi</p>
-                </div>
-                <button
-                  onClick={() => setSelectedCategory('ozbek-adabiyoti')}
-                  className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Barchasi</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                {uzbekClassics.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    language={language}
-                    theme={theme}
-                    isFavorite={favoriteIds.includes(book.id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onViewBook={(b) => setActiveBookForModal(b)}
-                    onReadBook={(b) => handleStartReading(b)}
-                    readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                  />
-                ))}
-              </div>
-            </section>
-
-            {/* 3. Jahon adabiyoti */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold font-display">{t.worldLiterature}</h2>
-                  <p className="text-xs text-slate-400">Jahon klassikasi va sarguzasht durdonalari</p>
-                </div>
-                <button
-                  onClick={() => setSelectedCategory('jahon-adabiyoti')}
-                  className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Barchasi</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                {worldClassics.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    language={language}
-                    theme={theme}
-                    isFavorite={favoriteIds.includes(book.id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onViewBook={(b) => setActiveBookForModal(b)}
-                    onReadBook={(b) => handleStartReading(b)}
-                    readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                  />
-                ))}
-              </div>
-            </section>
-
-            {/* 4. She‘riyat va Dostonlar */}
-            {poetryBooks.length > 0 && (
-              <section className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-xl sm:text-2xl font-bold font-display">{t.poetry}</h2>
-                    <p className="text-xs text-slate-400">O‘zbek she‘riyatining betakror ohanglari</p>
+              /* Structured Editorial Collections for Home Page */
+              <div className="space-y-16">
+                {/* 1. Siz uchun tavsiyalar */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-bold font-display">{t.recommended}</h2>
+                      <p className="text-xs text-slate-400">Eng ko‘p o‘qilgan va yuqori baholangan asarlar</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedCategory('all')}
+                      className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Barchasi</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setSelectedCategory('sheriyat')}
-                    className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Barchasi</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                  {poetryBooks.map((book) => (
-                    <BookCard
-                      key={book.id}
-                      book={book}
-                      language={language}
-                      theme={theme}
-                      isFavorite={favoriteIds.includes(book.id)}
-                      onToggleFavorite={handleToggleFavorite}
-                      onViewBook={(b) => setActiveBookForModal(b)}
-                      onReadBook={(b) => handleStartReading(b)}
-                      readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                    />
-                  ))}
-                </div>
-              </section>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    {recommendedBooks.map((book) => (
+                      <BookCard
+                        key={book.id}
+                        book={book}
+                        language={language}
+                        theme={theme}
+                        isFavorite={favoriteIds.includes(book.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onViewBook={(b) => setActiveBookForModal(b)}
+                        onReadBook={(b) => handleStartReading(b)}
+                        readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                      />
+                    ))}
+                  </div>
+                </section>
+
+                {/* 2. O‘zbek adabiyoti durdonalari */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-bold font-display">{t.uzbekLiterature}</h2>
+                      <p className="text-xs text-slate-400">Navoiy, Qodiriy, Bobur va Cho‘lpon merosi</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedCategory('ozbek-adabiyoti')}
+                      className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Barchasi</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    {uzbekClassics.map((book) => (
+                      <BookCard
+                        key={book.id}
+                        book={book}
+                        language={language}
+                        theme={theme}
+                        isFavorite={favoriteIds.includes(book.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onViewBook={(b) => setActiveBookForModal(b)}
+                        onReadBook={(b) => handleStartReading(b)}
+                        readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                      />
+                    ))}
+                  </div>
+                </section>
+
+                {/* 3. Jahon adabiyoti */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-bold font-display">{t.worldLiterature}</h2>
+                      <p className="text-xs text-slate-400">Jahon klassikasi va sarguzasht durdonalari</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedCategory('jahon-adabiyoti')}
+                      className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Barchasi</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    {worldClassics.map((book) => (
+                      <BookCard
+                        key={book.id}
+                        book={book}
+                        language={language}
+                        theme={theme}
+                        isFavorite={favoriteIds.includes(book.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onViewBook={(b) => setActiveBookForModal(b)}
+                        onReadBook={(b) => handleStartReading(b)}
+                        readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                      />
+                    ))}
+                  </div>
+                </section>
+
+                {/* 4. She‘riyat va Dostonlar */}
+                {poetryBooks.length > 0 && (
+                  <section className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-xl sm:text-2xl font-bold font-display">{t.poetry}</h2>
+                        <p className="text-xs text-slate-400">O‘zbek she‘riyatining betakror ohanglari</p>
+                      </div>
+                      <button
+                        onClick={() => setSelectedCategory('sheriyat')}
+                        className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>Barchasi</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                      {poetryBooks.map((book) => (
+                        <BookCard
+                          key={book.id}
+                          book={book}
+                          language={language}
+                          theme={theme}
+                          isFavorite={favoriteIds.includes(book.id)}
+                          onToggleFavorite={handleToggleFavorite}
+                          onViewBook={(b) => setActiveBookForModal(b)}
+                          onReadBook={(b) => handleStartReading(b)}
+                          readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* 5. Bepul mutolaa qilish mumkin bo‘lgan kitoblar */}
+                <section className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-xl sm:text-2xl font-bold font-display">{t.freeBooks}</h2>
+                      <p className="text-xs text-slate-400">Barcha uchun ochiq litsenziyadagi kitoblar</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedPriceFilter('free')}
+                      className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Barchasi</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    {freeBooks.map((book) => (
+                      <BookCard
+                        key={book.id}
+                        book={book}
+                        language={language}
+                        theme={theme}
+                        isFavorite={favoriteIds.includes(book.id)}
+                        onToggleFavorite={handleToggleFavorite}
+                        onViewBook={(b) => setActiveBookForModal(b)}
+                        onReadBook={(b) => handleStartReading(b)}
+                        readingProgressPercent={readingHistory[book.id]?.progressPercent}
+                      />
+                    ))}
+                  </div>
+                </section>
+              </div>
             )}
-
-            {/* 5. Bepul mutolaa qilish mumkin bo‘lgan kitoblar */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-bold font-display">{t.freeBooks}</h2>
-                  <p className="text-xs text-slate-400">Barcha uchun ochiq litsenziyadagi kitoblar</p>
-                </div>
-                <button
-                  onClick={() => setSelectedPriceFilter('free')}
-                  className="text-xs text-purple-400 hover:text-purple-300 font-semibold flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Barchasi</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
-                {freeBooks.map((book) => (
-                  <BookCard
-                    key={book.id}
-                    book={book}
-                    language={language}
-                    theme={theme}
-                    isFavorite={favoriteIds.includes(book.id)}
-                    onToggleFavorite={handleToggleFavorite}
-                    onViewBook={(b) => setActiveBookForModal(b)}
-                    onReadBook={(b) => handleStartReading(b)}
-                    readingProgressPercent={readingHistory[book.id]?.progressPercent}
-                  />
-                ))}
-              </div>
-            </section>
-          </div>
+          </>
         )}
       </main>
 

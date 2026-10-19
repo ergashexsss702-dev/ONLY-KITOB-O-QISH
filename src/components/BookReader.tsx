@@ -432,25 +432,45 @@ export const BookReader: React.FC<BookReaderProps> = ({
             </div>
           ) : (
             // PDF Authentic Page Mode Viewport
-            <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-purple-500/30 rounded-2xl bg-black/10">
-              <div className="w-16 h-16 rounded-2xl bg-purple-900/30 flex items-center justify-center text-purple-400 mb-4">
-                <FileText className="w-8 h-8" />
-              </div>
-              <h4 className="font-serif font-bold text-lg text-center mb-1">
-                {book.title} — {currentPage}-sahifa
-              </h4>
-              <p className="text-xs text-slate-400 text-center max-w-md mb-6">
-                PDF varoqlash ko‘rinishi. Asl nashr sahifalari yuqori aniqlikda raqamlashtirilgan.
-              </p>
-              <div className="w-full bg-white text-slate-900 p-8 rounded-xl shadow-inner font-serif text-sm leading-relaxed min-h-[360px] border border-slate-300">
-                <div className="text-right text-xs text-slate-400 font-mono mb-4">{currentPage} / {totalPages}</div>
-                <div className="font-bold text-center text-base mb-6">{currentChapterTitle}</div>
-                <div className="space-y-4">
-                  {displayContent.split('\n\n').slice(0, 3).map((p, i) => (
-                    <p key={i} className="indent-4">{p}</p>
-                  ))}
+            <div className="flex flex-col items-center justify-center p-4 sm:p-6 border border-purple-500/30 rounded-2xl bg-black/10 min-h-[420px]">
+              {book.pdfUrl ? (
+                <div className="w-full space-y-4">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span>PDF hujjat manbasi: {book.title}</span>
+                    <a
+                      href={book.pdfUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-purple-400 hover:underline"
+                    >
+                      Alohida oynada ochish
+                    </a>
+                  </div>
+                  <iframe
+                    src={`${book.pdfUrl}#page=${currentPage}`}
+                    title={book.title}
+                    className="w-full h-[600px] rounded-xl border border-zinc-800 bg-white"
+                  />
                 </div>
-              </div>
+              ) : (
+                <div className="py-12 px-4 text-center max-w-md space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+                    <FileText className="w-8 h-8" />
+                  </div>
+                  <h4 className="font-serif font-bold text-lg text-white">
+                    PDF fayl mavjud emas
+                  </h4>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {t.pdfNotAvailable}
+                  </p>
+                  <button
+                    onClick={() => setMode('text')}
+                    className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-purple-600 text-white hover:bg-purple-500 shadow-md shadow-purple-600/30 transition-all cursor-pointer"
+                  >
+                    Matnli mutolaaga o‘tish
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

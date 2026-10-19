@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   BookOpen, 
   Search, 
@@ -26,7 +26,9 @@ interface NavbarProps {
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenAdmin: () => void;
-  onToggleSearch: () => void;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  onSearchSubmit: () => void;
   favoritesCount: number;
 }
 
@@ -42,11 +44,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenProfile,
   onOpenSettings,
   onOpenAdmin,
-  onToggleSearch,
+  searchQuery,
+  onSearchChange,
+  onSearchSubmit,
   favoritesCount
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [headerSearchOpen, setHeaderSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const t = translations[language];
 
   const navLinks = [
@@ -64,13 +70,27 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const isDark = theme === 'dark';
 
+  // Auto-focus header search input when opened
+  useEffect(() => {
+    if (headerSearchOpen) {
+      searchInputRef.current?.focus();
+    }
+  }, [headerSearchOpen]);
+
+  const handleHeaderSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSearchSubmit();
+    const catalogEl = document.getElementById('catalog-section');
+    catalogEl?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
     <header className={`sticky top-0 z-40 transition-colors duration-300 backdrop-blur-md border-b ${
       isDark 
-        ? 'bg-black/75 border-purple-900/30 text-white' 
-        : 'bg-white/85 border-slate-200 text-slate-900'
+        ? 'bg-black/85 border-purple-900/30 text-white' 
+        : 'bg-white/90 border-slate-200 text-slate-900'
     }`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4 md:gap-8">
         {/* Zone 1: Brand Title */}
         <div 
           onClick={() => handleNavClick('home')}
@@ -84,36 +104,76 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </div>
 
-        {/* Zone 2: Navigation Links (single line, clean typography) */}
-        <nav className="hidden lg:flex items-center gap-7 text-sm font-medium">
-          {navLinks.map((link) => {
-            const isActive = currentTab === link.id;
-            return (
-              <button
-                key={link.id}
-                onClick={() => handleNavClick(link.id)}
-                className={`transition-colors whitespace-nowrap py-1 relative cursor-pointer ${
-                  isActive
-                    ? isDark ? 'text-purple-400 font-semibold' : 'text-purple-700 font-semibold'
-                    : isDark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {link.label}
-                {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-purple-600 to-indigo-500 rounded-full" />
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        {/* Header Search Bar (when opened in header) */}
+        {headerSearchOpen ? (
+          <form 
+            onSubmit={handleHeaderSearchSubmit}
+            className="flex-1 max-w-md mx-2 relative animate-fade-in"
+          >
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder={t.searchPlaceholder}
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className={`w-full pl-9 pr-9 py-1.5 rounded-xl text-xs border focus:outline-none transition-all ${
+                isDark 
+                  ? 'bg-zinc-900 border-purple-500/50 text-white shadow-inner' 
+                  : 'bg-slate-100 border-purple-400 text-slate-900'
+              }`}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onSearchChange('');
+                setHeaderSearchOpen(false);
+              }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </form>
+        ) : (
+          /* Zone 2: Navigation Links (single line, clean typography) */
+          <nav className="hidden lg:flex items-center gap-7 text-sm font-medium">
+            {navLinks.map((link) => {
+              const isActive = currentTab === link.id && !searchQuery;
+              return (
+                <button
+                  key={link.id}
+                  onClick={() => handleNavClick(link.id)}
+                  className={`transition-colors whitespace-nowrap py-1 relative cursor-pointer ${
+                    isActive
+                      ? isDark ? 'text-purple-400 font-semibold' : 'text-purple-700 font-semibold'
+                      : isDark ? 'text-slate-300 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {link.label}
+                  {isActive && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-purple-600 to-indigo-500 rounded-full" />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        )}
 
         {/* Zone 3: Interactive Controls */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          {/* Quick Search */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Quick Search Toggle */}
           <button
-            onClick={onToggleSearch}
+            onClick={() => {
+              setHeaderSearchOpen(!headerSearchOpen);
+              if (!headerSearchOpen) {
+                const catalogEl = document.getElementById('catalog-section');
+                catalogEl?.scrollIntoView({ behavior: 'smooth' });
+              }
+            }}
             className={`p-2 rounded-lg transition-colors cursor-pointer ${
-              isDark ? 'hover:bg-purple-950/40 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-600 hover:text-slate-900'
+              headerSearchOpen
+                ? 'bg-purple-600 text-white'
+                : isDark ? 'hover:bg-purple-950/40 text-slate-300 hover:text-white' : 'hover:bg-slate-100 text-slate-600 hover:text-slate-900'
             }`}
             title={t.searchButton}
             aria-label={t.searchButton}
@@ -125,12 +185,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="relative">
             <button
               onClick={() => setLangMenuOpen(!langMenuOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium uppercase tracking-wider transition-colors cursor-pointer border ${
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium uppercase tracking-wider transition-colors cursor-pointer border ${
                 isDark 
                   ? 'border-purple-900/40 hover:bg-purple-950/40 text-slate-300' 
                   : 'border-slate-200 hover:bg-slate-100 text-slate-700'
               }`}
-              title="Tilni tanlash / Выбор языка / Select Language"
+              title="Tilni tanlash / Select Language"
             >
               <Globe className="w-3.5 h-3.5 text-purple-400" />
               <span>{language}</span>
@@ -178,7 +238,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Background & Visual Settings */}
           <button
             onClick={onOpenSettings}
-            className={`p-2 rounded-lg transition-colors cursor-pointer ${
+            className={`p-2 rounded-lg transition-colors cursor-pointer hidden sm:flex ${
               isDark ? 'hover:bg-purple-950/40 text-slate-300 hover:text-purple-300' : 'hover:bg-slate-100 text-slate-600 hover:text-purple-600'
             }`}
             title={t.backgroundSettings}
@@ -191,17 +251,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           {user ? (
             <button
               onClick={onOpenProfile}
-              className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-full bg-purple-900/30 border border-purple-500/40 hover:bg-purple-900/50 transition-colors text-xs font-medium cursor-pointer"
+              className="flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-full bg-purple-900/30 border border-purple-500/40 hover:bg-purple-900/50 transition-colors text-xs font-medium cursor-pointer"
             >
               <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center font-bold text-[11px]">
                 {user.fullName.charAt(0).toUpperCase()}
               </div>
-              <span className="max-w-[85px] truncate hidden sm:inline">{user.fullName.split(' ')[0]}</span>
+              <span className="max-w-[75px] truncate hidden md:inline">{user.fullName.split(' ')[0]}</span>
             </button>
           ) : (
             <button
               onClick={onOpenAuth}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md shadow-purple-600/25 transition-all cursor-pointer whitespace-nowrap"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md shadow-purple-600/25 transition-all cursor-pointer whitespace-nowrap"
             >
               {t.login}
             </button>
@@ -239,12 +299,35 @@ export const Navbar: React.FC<NavbarProps> = ({
             isDark ? 'bg-zinc-950/95 border-purple-900/30' : 'bg-white/95 border-slate-200'
           }`}
         >
+          {/* Mobile search input */}
+          <form onSubmit={handleHeaderSearchSubmit} className="relative mb-3">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" />
+            <input
+              type="text"
+              placeholder={t.searchPlaceholder}
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              className={`w-full pl-9 pr-9 py-2 rounded-xl text-xs border focus:outline-none ${
+                isDark ? 'bg-zinc-900 border-zinc-800 text-white' : 'bg-slate-100 border-slate-300 text-slate-900'
+              }`}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </form>
+
           {navLinks.map((link) => (
             <button
               key={link.id}
               onClick={() => handleNavClick(link.id)}
               className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                currentTab === link.id
+                currentTab === link.id && !searchQuery
                   ? 'bg-purple-600 text-white'
                   : isDark ? 'text-slate-300 hover:bg-zinc-900' : 'text-slate-700 hover:bg-slate-100'
               }`}
@@ -253,6 +336,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           ))}
           <div className="pt-2 border-t border-purple-900/20 flex gap-2">
+            <button
+              onClick={() => { onOpenSettings(); setMobileMenuOpen(false); }}
+              className={`flex-1 py-2 px-3 text-xs font-medium rounded-lg text-center cursor-pointer border ${
+                isDark ? 'border-purple-900/40 text-slate-300 bg-zinc-900' : 'border-slate-300 text-slate-700 bg-slate-100'
+              }`}
+            >
+              {t.backgroundSettings}
+            </button>
             <button
               onClick={() => { onOpenAdmin(); setMobileMenuOpen(false); }}
               className={`flex-1 py-2 px-3 text-xs font-medium rounded-lg text-center cursor-pointer border ${
